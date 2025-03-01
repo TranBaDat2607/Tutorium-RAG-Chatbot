@@ -1,6 +1,4 @@
 # user_proxy_agent.py
-import pickle
-from typing import Any
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import AIMessage
 

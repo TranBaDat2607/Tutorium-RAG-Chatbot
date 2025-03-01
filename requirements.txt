@@ -1,7 +1,12 @@
-SQLAlchemy
 langchain_google_genai
 langchain_core
-langgraph
+langchain_community
+langchain_chroma
+langchain
 python-dotenv
 pydantic
-typing-extensions
+SQLAlchemy
+typing_extensions
+langgraph
+onnxruntime
+pypdf

@@ -11,8 +11,7 @@ from langchain_core.messages import AIMessage
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-from sqlalchemy import inspect
-
+from sqlalchemy import inspect, text
 
 
 class DatabaseAgent:
@@ -47,12 +46,56 @@ class DatabaseAgent:
             "Below is the database schema information for your reference:\n"
             "Tables: {tables}\n"
             "Foreign key relationships: {fks}\n"
-            "Table columns (as a dictionary with table names as keys and lists of column names as values): {columns}\n"
+            "Table columns (as a dictionary with table names as keys and lists of column names, column datatypes and column value example): {columns}\n"
+            "You can only FINAL SELECT this attribute: {allow_cols}"
         ).format(
             tables=self.takeDatabaseTables(),
             fks=self.takeDatabaseConnections(),
-            columns=self.getTableColumns()
+            columns=self.getTableColumns(),
+            allow_cols=self.allow_cols
+
         )
+        self.allow_cols = {
+        "Users.username",
+        "Users.displayname",
+        "Users.imgurl",
+
+        "Roles.rolename",
+        "Roles.description",
+
+        "Permissions.slug",
+        "Permissions.name",
+        "Permissions.description",
+
+        "Tutors.description",
+        "Tutors.descriptionvideolink",
+
+        "Learners.learninggoal",
+
+        "Accomplishments.description",
+        "Accomplishments.verifylink",
+
+        "Categories.categoryname",
+        "Categories.description",
+
+        "Contracts.target",
+        "Contracts.timestart",
+        "Contracts.timeend",
+        "Contracts.payment",
+        "Contracts.status",
+
+        "WorkingTimes.starttime",
+        "WorkingTimes.endtime",
+        "WorkingTimes.note",
+
+        "Posts.title",
+        "Posts.content",
+        "Posts.posttime",
+
+        "Comments.content",
+        "Comments.comment_time",
+        }
+
 
     def takeDatabaseTables(self) -> List[str]:
         """
@@ -86,19 +129,56 @@ class DatabaseAgent:
 
         return connections
 
-    def getTableColumns(self) -> Dict[str, List[str]]:
+    def getTableColumns(self) -> Dict[str, List]:
         """
-        Lấy thông tin danh sách các thuộc tính (tên cột) của từng bảng trong cơ sở dữ liệu.
+        Lấy thông tin danh sách các thuộc tính (tên cột) của từng bảng trong cơ sở dữ liệu,
+        kiểu dữ liệu của các cột và một số ví dụ giá trị trong bảng.
+
+        Ví dụ:
+            Bảng Users gồm có UserID, Username,...
+            Hàm này sẽ trả về:
+            {
+                "Users": [
+                    {"UserID", "Username"},                  # Tập hợp tên cột
+                    {"INTEGER", "VARCHAR"},                    # Tập hợp kiểu dữ liệu (dạng chuỗi)
+                    {"UserID": "1, 2, 3", "Username": "Nguyễn Văn A, Nguyễn Văn B, Trần Quốc C"}  # Ví dụ của giá trị từng cột
+                ]
+            }
 
         Returns:
-            Dict[str, List[str]]: Một dictionary với key là tên bảng và value là danh sách tên các cột của bảng đó.
+            Dict[str, List]: Một dictionary với key là tên bảng và value là danh sách gồm:
+                             - Tập hợp tên cột (set[str])
+                             - Tập hợp kiểu dữ liệu (set[str])
+                             - Dictionary ví dụ giá trị của các cột (Dict[str, str])
         """
         inspector = inspect(self.database)
-        table_columns = {}
+        table_info = {}
+
         for table in inspector.get_table_names():
             columns = inspector.get_columns(table)
-            table_columns[table] = [col["name"] for col in columns]
-        return table_columns
+
+            # Tập hợp tên cột và kiểu dữ liệu (được chuyển thành chuỗi)
+            col_names = {col["name"] for col in columns}
+            col_types = {str(col["type"]) for col in columns}
+
+            sample_values = {}
+            with self.database.connect() as conn:
+                # Sử dụng sqlalchemy.text để bọc truy vấn và mappings() để nhận kết quả dạng dictionary
+                query = text(f"SELECT * FROM {table} LIMIT 3")
+                rows = conn.execute(query).mappings().all()
+
+            if rows:
+                for col in columns:
+                    col_name = col["name"]
+                    samples = [str(row[col_name]) for row in rows if row[col_name] is not None]
+                    sample_values[col_name] = ", ".join(samples) if samples else ""
+            else:
+                for col in columns:
+                    sample_values[col["name"]] = ""
+
+            table_info[table] = [col_names, col_types, sample_values]
+        print(table_info)
+        return table_info
 
     def execute_query(self, query: str) -> Union[List[Dict[str, Any]], Dict[str, str]]:
         """
@@ -145,19 +225,26 @@ class DatabaseAgent:
 
         Returns:
             str: câu lệnh truy vấn MySQL
-
         """
-        helper_prompt = "You need to analyse and generate MySQL prompt based on given information, this is user input for you analyse and generate MysSQL"
+        helper_prompt = (
+            "Based on the complete database schema provided, please analyze the following user input and generate an optimized, complex, and valid MySQL query. "
+            "Ensure that every attribute used in the query is fully qualified in the format 'table_name.attribute_name' (e.g., 'Users.username', 'Orders.OrderID'). "
+            "Your query should handle complex conditions, multiple joins, aggregations, subqueries, and any other advanced SQL features as needed, while strictly adhering to MySQL syntax. "
+            "Do not include any additional commentary or extraneous text in your output. "
+            "User input: "
+        )
         mySQL_query = self.database_llm.invoke(self.system_prompt + helper_prompt + userInput).content
         return mySQL_query
 
-    def make_SQLresponse_natural(self, sqlResponse: Union[List[Dict[str, Any]], Dict[str, str]]) -> AIMessage:
+    def make_SQLresponse_natural(self, sqlResponse: Union[List[Dict[str, Any]], Dict[str, str]], userInput: str) -> AIMessage:
         helper_prompt = (
-                "Bạn là một trợ lý AI chuyên nghiệp, nhiệm vụ của bạn là chuyển đổi kết quả truy vấn SQL thô thành một phản hồi tự nhiên, "
+                "Bạn là một trợ lý AI chuyên nghiệp, nhiệm vụ của bạn là dựa vào câu hỏi của người dùng và chuyển đổi kết quả truy vấn SQL thô thành một phản hồi tự nhiên, "
                 "dễ hiểu và thân thiện cho người dùng bằng tiếng Việt. "
                 "Nếu truy vấn trả về dữ liệu, hãy trả lời theo dạng: 'Hệ thống hiện có 5 người dùng.' và kết thúc bằng '<<END>>'. "
-                "Nếu không có dữ liệu, hãy trả lời: 'Không tìm thấy dữ liệu phù hợp.' và kết thúc bằng '<<END>>'.\n"
-                "Kết quả truy vấn SQL: " + str(sqlResponse)
+                "Một số dạng trả về đặc biệt ví dụ như: [{'Có_dạy_ai_không': 'Có'}] sẽ phải dựa vào câu hỏi của người dùng để phản hồi 'và kết thúc bằng '<<END>> "
+                "Nếu không có dữ liệu, hãy trả lời dựa theo câu hỏi của người dùng một cách hợp lý và kết thúc bằng '<<END>>'.\n"
+                f"Đây là câu hỏi của người dùng: {userInput}"
+                f"Kết quả truy vấn SQL: {sqlResponse}"
         )
         print(sqlResponse)
         natural_response = self.database_llm.invoke(helper_prompt).content
