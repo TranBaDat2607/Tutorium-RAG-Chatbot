@@ -36,6 +36,46 @@ class DatabaseAgent:
             temperature=0,
             google_api_key=llm_apiKey
         )
+        self.allow_cols = {
+            "Users.username",
+            "Users.displayname",
+            "Users.imgurl",
+
+            "Roles.rolename",
+            "Roles.description",
+
+            "Permissions.slug",
+            "Permissions.name",
+            "Permissions.description",
+
+            "Tutors.description",
+            "Tutors.descriptionvideolink",
+
+            "Learners.learninggoal",
+
+            "Accomplishments.description",
+            "Accomplishments.verifylink",
+
+            "Categories.categoryname",
+            "Categories.description",
+
+            "Contracts.target",
+            "Contracts.timestart",
+            "Contracts.timeend",
+            "Contracts.payment",
+            "Contracts.status",
+
+            "WorkingTimes.starttime",
+            "WorkingTimes.endtime",
+            "WorkingTimes.note",
+
+            "Posts.title",
+            "Posts.content",
+            "Posts.posttime",
+
+            "Comments.content",
+            "Comments.comment_time",
+        }
         self.system_prompt = (
             "You are an expert SQL assistant. Your task is to generate a valid MySQL query based solely on the user's request. "
             "Do not include any additional explanations, commentary, or markdown formatting. "
@@ -55,46 +95,7 @@ class DatabaseAgent:
             allow_cols=self.allow_cols
 
         )
-        self.allow_cols = {
-        "Users.username",
-        "Users.displayname",
-        "Users.imgurl",
 
-        "Roles.rolename",
-        "Roles.description",
-
-        "Permissions.slug",
-        "Permissions.name",
-        "Permissions.description",
-
-        "Tutors.description",
-        "Tutors.descriptionvideolink",
-
-        "Learners.learninggoal",
-
-        "Accomplishments.description",
-        "Accomplishments.verifylink",
-
-        "Categories.categoryname",
-        "Categories.description",
-
-        "Contracts.target",
-        "Contracts.timestart",
-        "Contracts.timeend",
-        "Contracts.payment",
-        "Contracts.status",
-
-        "WorkingTimes.starttime",
-        "WorkingTimes.endtime",
-        "WorkingTimes.note",
-
-        "Posts.title",
-        "Posts.content",
-        "Posts.posttime",
-
-        "Comments.content",
-        "Comments.comment_time",
-        }
 
 
     def takeDatabaseTables(self) -> List[str]:

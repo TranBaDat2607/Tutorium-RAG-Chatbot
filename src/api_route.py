@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from pydantic import BaseModel
 from chatbot_init import process_input_message
+import uvicorn
 
 app = FastAPI()
 
@@ -19,6 +20,6 @@ async def read_root():
     return {"message": "API server is running"}
 
 if __name__ == "__main__":
-    import uvicorn
+
     # Chạy server trên localhost với port 8000
     uvicorn.run(app, host="127.0.0.1", port=8000)
