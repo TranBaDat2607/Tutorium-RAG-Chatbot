@@ -11,11 +11,12 @@ from langchain_core.messages import AIMessage
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-from sqlalchemy import inspect, text
+
 
 
 class DatabaseAgent:
-    def __init__(self, db_user: str, db_password: str, db_host: str, db_database: str, llm_apiKey: str) -> None:
+    def __init__(self, db_user: str, db_password: str, db_host: str, db_database: str, llm_apiKey: str, db_tables: List[str]
+                 , db_connections: List[dict], db_cols: Dict[str, List]) -> None:
         """
         Khởi tạo đối tượng DatabaseAgent với các thông số kết nối cơ sở dữ liệu.
 
@@ -28,158 +29,34 @@ class DatabaseAgent:
         """
         self.database: Engine = create_engine(
             f"mysql+pymysql://{db_user}:{db_password}@{db_host}/{db_database}",
-            pool_pre_ping=True,
-            echo=False
+            pool_pre_ping=True, # kiểm tra tính khả dụng của kết nối trước khi sử dụng
+            echo=False # không in ra các câu lệnh SQL được thực thi trên console
         )
         self.database_llm = ChatGoogleGenerativeAI(
             model="gemini-1.5-flash",
             temperature=0,
             google_api_key=llm_apiKey
         )
-        self.allow_cols = {
-            "Users.username",
-            "Users.displayname",
-            "Users.imgurl",
 
-            "Roles.rolename",
-            "Roles.description",
-
-            "Permissions.slug",
-            "Permissions.name",
-            "Permissions.description",
-
-            "Tutors.description",
-            "Tutors.descriptionvideolink",
-
-            "Learners.learninggoal",
-
-            "Accomplishments.description",
-            "Accomplishments.verifylink",
-
-            "Categories.categoryname",
-            "Categories.description",
-
-            "Contracts.target",
-            "Contracts.timestart",
-            "Contracts.timeend",
-            "Contracts.payment",
-            "Contracts.status",
-
-            "WorkingTimes.starttime",
-            "WorkingTimes.endtime",
-            "WorkingTimes.note",
-
-            "Posts.title",
-            "Posts.content",
-            "Posts.posttime",
-
-            "Comments.content",
-            "Comments.comment_time",
-        }
         self.system_prompt = (
-            "You are an expert SQL assistant. Your task is to generate a valid MySQL query based solely on the user's request. "
-            "Do not include any additional explanations, commentary, or markdown formatting. "
-            "Your output must be a single, executable SQL query without any surrounding text. "
-            "If the query is complete and ready for execution, it must start exactly with the marker 'FINAL QUERY:'. "
-            "For example, a correct output should be: \n"
-            "FINAL QUERY: SELECT * FROM users WHERE id = 1;\n\n"
-            "Below is the database schema information for your reference:\n"
-            "Tables: {tables}\n"
-            "Foreign key relationships: {fks}\n"
-            "Table columns (as a dictionary with table names as keys and lists of column names, column datatypes and column value example): {columns}\n"
-            "You can only FINAL SELECT this attribute: {allow_cols}"
+        "You are an expert SQL assistant. Your task is to generate a valid MySQL query based solely on the user's request. "
+        "Do not include any additional explanations, commentary, or markdown formatting. "
+        "Your output must be a single, executable SQL query without any surrounding text. "
+        "If the query is complete and ready for execution, it must start exactly with the marker 'FINAL QUERY:'.\n"
+        "For example, a correct output should be:\n"
+        "FINAL QUERY: SELECT * FROM users WHERE id = 1;\n\n"
+        "Below is the database schema information for your reference:\n"
+        "Tables: {tables}\n"
+        "Foreign key relationships: {fks}\n"
+        "Table columns (as a dictionary with table names as keys and lists of column names, column datatypes, and example values): {columns}\n\n"
+        "IMPORTANT: The final query must exclude sensitive columns such as passwords, user IDs, and any other confidential fields. "
+        "Ensure that the output data does not contain these sensitive details."
         ).format(
-            tables=self.takeDatabaseTables(),
-            fks=self.takeDatabaseConnections(),
-            columns=self.getTableColumns(),
-            allow_cols=self.allow_cols
+            tables=db_tables,
+            fks=db_connections,
+            columns=db_cols
 
         )
-
-
-
-    def takeDatabaseTables(self) -> List[str]:
-        """
-        Lấy danh sách tất cả các bảng trong cơ sở dữ liệu.
-
-        Returns:
-            List[str]: Danh sách tên các bảng.
-        """
-        inspector = inspect(self.database)
-        return inspector.get_table_names()
-
-    def takeDatabaseConnections(self) -> List[dict]:
-        """
-        Lấy danh sách tất cả các ràng buộc khóa ngoại giữa các bảng.
-
-        Returns:
-            List[dict]: Danh sách các kết nối giữa bảng với thông tin khóa ngoại.
-        """
-        inspector = inspect(self.database)
-        connections = []
-
-        for table in inspector.get_table_names():
-            foreign_keys = inspector.get_foreign_keys(table)
-            for fk in foreign_keys:
-                connections.append({
-                    "table": table,
-                    "column": fk["constrained_columns"],
-                    "referenced_table": fk["referred_table"],
-                    "referenced_column": fk["referred_columns"]
-                })
-
-        return connections
-
-    def getTableColumns(self) -> Dict[str, List]:
-        """
-        Lấy thông tin danh sách các thuộc tính (tên cột) của từng bảng trong cơ sở dữ liệu,
-        kiểu dữ liệu của các cột và một số ví dụ giá trị trong bảng.
-
-        Ví dụ:
-            Bảng Users gồm có UserID, Username,...
-            Hàm này sẽ trả về:
-            {
-                "Users": [
-                    {"UserID", "Username"},                  # Tập hợp tên cột
-                    {"INTEGER", "VARCHAR"},                    # Tập hợp kiểu dữ liệu (dạng chuỗi)
-                    {"UserID": "1, 2, 3", "Username": "Nguyễn Văn A, Nguyễn Văn B, Trần Quốc C"}  # Ví dụ của giá trị từng cột
-                ]
-            }
-
-        Returns:
-            Dict[str, List]: Một dictionary với key là tên bảng và value là danh sách gồm:
-                             - Tập hợp tên cột (set[str])
-                             - Tập hợp kiểu dữ liệu (set[str])
-                             - Dictionary ví dụ giá trị của các cột (Dict[str, str])
-        """
-        inspector = inspect(self.database)
-        table_info = {}
-
-        for table in inspector.get_table_names():
-            columns = inspector.get_columns(table)
-
-            # Tập hợp tên cột và kiểu dữ liệu (được chuyển thành chuỗi)
-            col_names = {col["name"] for col in columns}
-            col_types = {str(col["type"]) for col in columns}
-
-            sample_values = {}
-            with self.database.connect() as conn:
-                # Sử dụng sqlalchemy.text để bọc truy vấn và mappings() để nhận kết quả dạng dictionary
-                query = text(f"SELECT * FROM {table} LIMIT 3")
-                rows = conn.execute(query).mappings().all()
-
-            if rows:
-                for col in columns:
-                    col_name = col["name"]
-                    samples = [str(row[col_name]) for row in rows if row[col_name] is not None]
-                    sample_values[col_name] = ", ".join(samples) if samples else ""
-            else:
-                for col in columns:
-                    sample_values[col["name"]] = ""
-
-            table_info[table] = [col_names, col_types, sample_values]
-        print(table_info)
-        return table_info
 
     def execute_query(self, query: str) -> Union[List[Dict[str, Any]], Dict[str, str]]:
         """
@@ -241,9 +118,9 @@ class DatabaseAgent:
         helper_prompt = (
                 "Bạn là một trợ lý AI chuyên nghiệp, nhiệm vụ của bạn là dựa vào câu hỏi của người dùng và chuyển đổi kết quả truy vấn SQL thô thành một phản hồi tự nhiên, "
                 "dễ hiểu và thân thiện cho người dùng bằng tiếng Việt. "
-                "Nếu truy vấn trả về dữ liệu, hãy trả lời theo dạng: 'Hệ thống hiện có 5 người dùng.' và kết thúc bằng '<<END>>'. "
-                "Một số dạng trả về đặc biệt ví dụ như: [{'Có_dạy_ai_không': 'Có'}] sẽ phải dựa vào câu hỏi của người dùng để phản hồi 'và kết thúc bằng '<<END>> "
-                "Nếu không có dữ liệu, hãy trả lời dựa theo câu hỏi của người dùng một cách hợp lý và kết thúc bằng '<<END>>'.\n"
+                "Nếu truy vấn trả về dữ liệu, hãy trả lời theo dạng: 'Hệ thống hiện có 5 người dùng. "
+                "Một số dạng trả về đặc biệt ví dụ như: [{'Có_dạy_ai_không': 'Có'}] sẽ phải dựa vào câu hỏi của người dùng để phản hồi"
+                "Nếu không có dữ liệu, hãy trả lời dựa theo câu hỏi của người dùng một cách hợp lý .\n"
                 f"Đây là câu hỏi của người dùng: {userInput}"
                 f"Kết quả truy vấn SQL: {sqlResponse}"
         )

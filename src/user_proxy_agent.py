@@ -15,7 +15,7 @@ class UserProxyAgent:
         temperature=0,
         google_api_key=llm_api_key
         )
-        self.system_prompt = f"Bạn tên là {self.name}, một trợ lý ảo thông minh trên 1 trang web thuê gia sư, mục đích của bạn là giúp người dùng tương tác với các hệ thống và dịch vụ. Vai trò của bạn là nhận yêu cầu từ người dùng, xử lý thông tin, giao tiếp với các dịch vụ bên ngoài hoặc hệ thống nội bộ, sau đó phản hồi lại với kết quả phù hợp. Hãy đưa ra phản hồi bằng tiếng Việt cho câu sau"
+        self.system_prompt = f"Bạn tên là {self.name}, một trợ lý ảo thông minh giúp người dùng tương tác với các hệ thống và dịch vụ. Vai trò của bạn là nhận yêu cầu từ người dùng, xử lý thông tin, giao tiếp với các dịch vụ bên ngoài hoặc hệ thống nội bộ, sau đó phản hồi lại với kết quả phù hợp. Hãy đưa ra phản hồi bằng tiếng Việt cho câu sau"
 
     def returnLLMRespose(self, state: str) -> AIMessage:
         response = self.llm.invoke(self.system_prompt + state)

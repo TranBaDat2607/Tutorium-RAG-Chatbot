@@ -1,9 +1,12 @@
 from typing_extensions import Annotated, Literal
 from langgraph.graph import StateGraph, START, END, MessagesState
+
 from supervisor_agent import SupervisorAgent
 from database_agent import DatabaseAgent
 from user_proxy_agent import UserProxyAgent
 from document_rag import DocumentAgent
+from take_database_info import DatabaseManager
+
 from langgraph.graph.message import add_messages
 import os
 import re
@@ -42,6 +45,7 @@ class State(MessagesState):
     context_summary: str  # Tóm tắt ngữ cảnh hội thoại
 
 
+
 # Cập nhật tóm tắt ngữ cảnh từ các tin nhắn gần nhất
 def update_context_summary(state: dict) -> None:
     state.setdefault("context_summary", "")  # Đảm bảo key "context_summary" tồn tại
@@ -71,8 +75,10 @@ def load_document_data_to_vector_space(document_folder_path: str) -> object:
     return vector_store
 
 
+
+
 # --- Node 1: Supervisor (Định tuyến) ---
-def supervisor_node(state: State) -> Command[Literal["databaseAgent", "userProxyAgent", "__end__"]]:
+def supervisor_node(state: State) -> Command[Literal["databaseAgent", "userProxyAgent", "routeToRAG", "__end__"]]:
     update_context_summary(state)
     supervisor = SupervisorAgent(llm_api_key=SUPERVISOR_API_KEY)
     supervisorCommand = supervisor.createSupervisorCommand(state)
@@ -87,7 +93,10 @@ def database_node(state: dict) -> Command[Literal["supervisor", "__end__"]]:
         db_password=DB_PASSWORD,
         db_host=DB_HOST,
         db_database=DB_NAME,
-        llm_apiKey=DB_API_KEY
+        llm_apiKey=DB_API_KEY,
+        db_tables=db_tables,
+        db_connections=db_connections,
+        db_cols=db_cols
     )
     # Tạo truy vấn từ tin nhắn cuối cùng và ngữ cảnh
     query_input = state["messages"][-1].content + "\nContext:\n" + state["context_summary"]
@@ -96,14 +105,8 @@ def database_node(state: dict) -> Command[Literal["supervisor", "__end__"]]:
     sqlResponse = db_agent.execute_query(sqlCleaned)
     natural_response = db_agent.make_SQLresponse_natural(sqlResponse, userInput=state["messages"][-1].content)
 
-    # Kiểm tra nếu có marker <<END>> để kết thúc
-    response_str = natural_response.content.strip()
-    marker_pattern = r'(<<END>>)$'
-    is_end = bool(re.search(marker_pattern, response_str))
-    cleaned_message = re.sub(marker_pattern, '', response_str).strip()
-    goto_target = "__end__" if is_end else "supervisor"
 
-    return Command(goto=goto_target, update={"messages": cleaned_message, "agents": ["databaseAgent"]})
+    return Command(goto="supervisor", update={"messages": natural_response, "agents": ["databaseAgent"]})
 
 
 # --- Node 3: User Proxy (Xử lý phản hồi cho người dùng) ---
@@ -131,17 +134,28 @@ def document_rag_node(state: dict) -> Command[Literal["supervisor"]]:
 # --- Khởi tạo đồ thị xử lý ---
 # Khởi tạo vector space phục vụ cho RAG
 vector_store = load_document_data_to_vector_space(DOCUMENT_PATH)
+db_manager = DatabaseManager(
+        db_user=DB_USER,
+        db_password=DB_PASSWORD,
+        db_host=DB_HOST,
+        db_database=DB_NAME
+    )
+db_tables = db_manager.takeDatabaseTables()
+db_connections = db_manager.takeDatabaseConnections()
+db_cols = db_manager.getTableColumns()
 
 builder = StateGraph(state_schema=State)
+builder.add_edge(START, "supervisor")
 builder.add_node("supervisor", supervisor_node)
 builder.add_node("databaseAgent", database_node)
 builder.add_node("userProxyAgent", user_proxy_node)
 builder.add_node("documentRAG", document_rag_node)
-builder.add_edge(START, "supervisor")
+
 graph = builder.compile(checkpointer=memory)
 
-print(graph.get_graph().draw_mermaid())
-#draw_mermaid_png(graph.get_graph().draw_mermaid(), output_file_path="diagram.png")
+#print(graph.get_graph().draw_mermaid_png())
+
+draw_mermaid_png(graph.get_graph().draw_mermaid(), output_file_path="diagram.png")
 # --- Hàm chính xử lý tin nhắn từ người dùng ---
 def process_input_message(user_message: str) -> str:
     events = list(graph.stream(
@@ -149,6 +163,7 @@ def process_input_message(user_message: str) -> str:
         config,
         stream_mode="values",
     ))
+
     if events and events[-1].get("messages"):
         return events[-1]["messages"][-1].content
     return ""
